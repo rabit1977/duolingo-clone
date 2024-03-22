@@ -2,7 +2,7 @@ import { auth } from '@clerk/nextjs';
 import { eq } from 'drizzle-orm';
 import { cache } from 'react';
 import db from './drizzle';
-import { courses, units, userProgress } from './schema';
+import { challengeProgress, courses, units, userProgress } from './schema';
 
 export const getCourses = cache(async () => {
   const data = await db.query.courses.findMany();
@@ -27,9 +27,10 @@ export const getUserProgress = cache(async () => {
 });
 
 export const getUnits = cache(async () => {
-  const progress = await getUserProgress();
+  const { userId } = await auth();
+  const userProgress = await getUserProgress();
 
-  if (!userProgress?.activeCourseId) {
+  if (!userId || !userProgress?.activeCourseId) {
     return [];
   }
 
@@ -40,20 +41,30 @@ export const getUnits = cache(async () => {
         with: {
           challenges: {
             with: {
-              challengeProgress: true,
+              challengeProgress: {
+                where: eq(challengeProgress.userId, userId),
+              },
             },
           },
         },
       },
     },
   });
-  const noramlizeData = data.map((unit) => {
+
+  const normlizeData = data.map((unit) => {
     const lessonsWithCompletedStatus = unit.lessons.map((lesson) => {
       const allCompletedChallenges = lesson.challenges.every((challenge) => {
-        return challenge.challengeProgress && challenge.challengeProgress.length > 0 && challenge.challengeProgress.every((progress) => progress.completed)
-      })
-    })
-  })
+        return (
+          challenge.challengeProgress &&
+          challenge.challengeProgress.length > 0 &&
+          challenge.challengeProgress.every((progress) => progress.completed)
+        );
+      });
+      return { ...lesson, completed: allCompletedChallenges };
+    });
+    return { ...unit, lessons: lessonsWithCompletedStatus };
+  });
+  return normlizeData;
 });
 
 export const getCourseById = cache(async (courseId: number) => {
